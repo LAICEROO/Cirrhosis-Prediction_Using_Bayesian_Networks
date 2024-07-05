@@ -1,0 +1,325 @@
+---
+title: "Wnioskowanie w warunkach niepewności - Projekt zaliczeniowy"
+author: "Mateusz Rup"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    smooth_scroll: true 
+    theme:
+      bg: "#ffffff"
+      fg: "#000000"
+      primary: "#56f507"
+      secondary: "#56f507"
+      fig_width: 15
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Dane
+
+## Opis danych
+[Link do Kaggle](https://www.kaggle.com/datasets/fedesoriano/cirrhosis-prediction-dataset)  
+Zbiór danych: Cirrhosis Prediction Dataset(cirrhosis.csv)  
+Nazwa zbioru danych: Cirrhosis Prediction Dataset  
+Opis zbioru danych: Zbiór danych "Cirrhosis-Prediction" zawiera informacje dotyczące pacjentów z marskością wątroby. Dane te są wykorzystywane do analizy i przewidywania stopnia zaawansowania choroby na podstawie różnych biomarkerów i objawów klinicznych.
+
+### Stage
+
+Typ zmiennej: Liczba całkowita (integer)  
+Opis zmiennej: Stopień zaawansowania marskości wątroby.  
+Zakres wartości: Zmienna przyjmuje wartości całkowite, gdzie wyższa liczba wskazuje na bardziej zaawansowany etap choroby.  
+
+### Bilirubin
+
+Typ zmiennej: Liczba rzeczywista (float)  
+Opis zmiennej: Poziom bilirubiny we krwi, mierzony w miligramach na decylitr (mg/dL).  
+Zakres wartości: Zmienna przyjmuje wartości ciągłe.
+
+### Albumin
+
+Typ zmiennej: Liczba rzeczywista (float)  
+Opis zmiennej: Poziom albuminy we krwi, mierzony w gramach na decylitr (g/dL).  
+Zakres wartości: Zmienna przyjmuje wartości ciągłe.
+
+### Prothrombin
+
+Typ zmiennej: Liczba rzeczywista (float)  
+Opis zmiennej: Czas protrombinowy (PT), mierzony w sekundach.  
+Zakres wartości: Zmienna przyjmuje wartości ciągłe.
+
+### Ascites
+
+Typ zmiennej: Liczba całkowita (integer)  
+Opis zmiennej: Obecność płynu w jamie brzusznej (wodobrzusze).  
+Zakres wartości: Zmienna przyjmuje wartości N (brak) lub Y (obecność).
+
+### Hepatomegaly
+
+Typ zmiennej: Liczba całkowita (integer)  
+Opis zmiennej: Powiększenie wątroby.  
+Zakres wartości: Zmienna przyjmuje wartości N (brak) lub Y (obecność).
+
+### Spiders
+
+Typ zmiennej: Liczba całkowita (integer)  
+Opis zmiennej: Obecność pajączków naczyniowych (teleangiektazje).  
+Zakres wartości: Zmienna przyjmuje wartości N (brak) lub Y (obecność).
+
+### Edema
+
+Typ zmiennej: Liczba całkowita (integer)  
+Opis zmiennej: Obecność obrzęków.  
+Zakres wartości: Zmienna przyjmuje wartości N (brak), S (umiarkowane) lub Y (znaczne).
+
+## Wczytanie danych
+```{r}
+setwd('C:/Users/mateu/Desktop/Studia/6 semestr/Wnioskowanie w warunkach niepewności/')
+data <- read.csv('cirrhosis.csv')
+```
+Wybieramy tylko 300 pierwszych wierszy
+```{r}
+data <- head(data, 300)
+str(data)
+```
+
+## Wybór odpowiednich kolumn
+```{r}
+data = data[, c("Stage", "Bilirubin", "Albumin", "Prothrombin", "Ascites", "Hepatomegaly", "Spiders", "Edema")]
+```
+
+# Użyte biblioteki
+
+### Rgraphviz
+Rgraphviz to biblioteka umożliwiająca wizualizację grafów w R, bazująca na oprogramowaniu Graphviz.
+
+### gRain
+gRain to biblioteka do modelowania probabilistycznego, szczególnie używana do pracy z grafami nieskierowanymi i skierowanymi, takimi jak sieci bayesowskie i markowskie.
+
+### bnlearn
+bnlearn to biblioteka przeznaczona do uczenia się struktur sieci bayesowskich z danych oraz do przeprowadzania wnioskowania probabilistycznego w takich sieciach.
+
+### lattice
+lattice to biblioteka do tworzenia zaawansowanych wykresów trellisowych, umożliwiająca wizualizację danych w sposób wielowymiarowy.
+
+```{r}
+library(lattice)
+library(Rgraphviz)
+library(bnlearn)
+library(gRain)
+```
+
+# Pogrupowanie danych
+## Funkcja do grupowania danych
+```{r}
+generate_groups <- function(data, column_name) {
+  min_val <- min(data[[column_name]], na.rm = TRUE)
+  max_val <- max(data[[column_name]], na.rm = TRUE)
+  diff_val <- max_val - min_val
+  
+  groups <- cut(data[[column_name]], 
+                breaks = c(min_val - 1, 
+                           min_val + 0.333 * diff_val, 
+                           min_val + 0.667 * diff_val, 
+                           max_val + 1), 
+                labels = c(sprintf("(%.2f, %.2f]", min_val - 1, 
+                                   min_val + 0.333 * diff_val), 
+                           sprintf("(%.2f, %.2f]", min_val + 0.333 * diff_val, 
+                                   min_val + 0.667 * diff_val), 
+                           sprintf("(%.2f, %.2f]", min_val + 0.667 * diff_val, 
+                                   max_val + 1))) 
+  
+  return(groups)
+}
+```
+## Pogrupowaie Danych
+```{r}
+# Bilirubin
+data$Bilirubin <- generate_groups(data, 'Bilirubin')
+
+(data$Bilirubin)
+```
+
+```{r}
+# Albumin
+data$Albumin <- generate_groups(data, 'Albumin')
+
+# Prothrombin
+data$Prothrombin <- generate_groups(data, 'Prothrombin')
+```
+
+# Zmiana typu danych na factor
+```{r}
+data[] <- lapply(data, factor)
+
+str(data)
+```
+
+# Zbadanie niezależności
+```{r}
+pairwise_ci_test <- function(df) {
+  n <- ncol(df)
+  results <- data.frame(
+    Comparison = character(),
+    p_value = numeric(),
+    Independence = character(),
+    stringsAsFactors = FALSE
+  )
+  
+  for (i in 1:(n-1)) {
+    for (j in (i+1):n) {
+      col1 <- df[[i]]
+      col2 <- df[[j]]
+      
+      if (!is.factor(col1)) col1 <- as.factor(col1)
+      if (!is.factor(col2)) col2 <- as.factor(col2)
+      
+      test_result <- ci.test(col1, col2, test = "x2")
+      comparison_name <- paste(names(df)[i], "vs", names(df)[j])
+      independence <- ifelse(test_result$p.value < 0.05, "zalezne", "niezalezne")
+      results <- rbind(results, data.frame(
+        Comparison = comparison_name,
+        p_value = test_result$p.value,
+        Independence = independence
+      ))
+    }
+  }
+  
+  return(results)
+}
+results_df <- pairwise_ci_test(data)
+```
+```{r}
+results_df
+```
+
+# Tworzenie sieci
+
+## Sieć HC
+```{r}
+siec_hc <- hc(data)      
+graphviz.plot(siec_hc)
+```
+
+## Siec IAMB
+```{r}
+siec_iamb <- iamb(data)
+siec_iamb <- set.arc(siec_iamb, "Albumin", "Ascites")
+siec_iamb <- set.arc(siec_iamb, "Ascites", "Stage")
+siec_iamb <- set.arc(siec_iamb, "Stage", "Bilirubin")
+siec_iamb <- set.arc(siec_iamb, "Ascites", "Edema")
+siec_iamb <- set.arc(siec_iamb, "Stage", "Hepatomegaly")
+siec_iamb <- set.arc(siec_iamb, "Hepatomegaly", "Spiders")
+siec_iamb <- set.arc(siec_iamb, "Edema", "Prothrombin")
+graphviz.plot(siec_iamb)
+```
+
+## FAST IAMB
+```{r}
+siec_fast_iamb <- fast.iamb(data)
+siec_fast_iamb <- set.arc(siec_fast_iamb, "Bilirubin", "Albumin")
+siec_fast_iamb <- set.arc(siec_fast_iamb, "Stage", "Ascites")
+siec_fast_iamb <- set.arc(siec_fast_iamb, "Stage", "Bilirubin")
+siec_fast_iamb <- set.arc(siec_fast_iamb, "Ascites", "Edema")
+siec_fast_iamb <- set.arc(siec_fast_iamb, "Stage", "Hepatomegaly")
+siec_fast_iamb <- set.arc(siec_fast_iamb, "Hepatomegaly", "Spiders")
+siec_fast_iamb <- set.arc(siec_fast_iamb, "Edema", "Prothrombin")
+graphviz.plot(siec_fast_iamb) 
+```
+
+## Sieć PC STABLE
+```{r}
+siec_pc_stable <- pc.stable(data)
+siec_pc_stable <- set.arc(siec_pc_stable, "Albumin", "Ascites")
+siec_pc_stable <- set.arc(siec_pc_stable, "Stage", "Ascites")
+siec_pc_stable <- set.arc(siec_pc_stable, "Stage", "Bilirubin")
+siec_pc_stable <- set.arc(siec_pc_stable, "Ascites", "Edema")
+siec_pc_stable <- set.arc(siec_pc_stable, "Stage", "Hepatomegaly")
+siec_pc_stable <- set.arc(siec_pc_stable, "Hepatomegaly", "Spiders")
+siec_pc_stable <- set.arc(siec_pc_stable, "Edema", "Prothrombin")
+graphviz.plot(siec_pc_stable)
+```
+
+## Sieć GS
+```{r}
+siec_gs <- tabu(data)
+graphviz.plot(siec_gs)
+```
+
+# Wybór sieci
+```{r}
+score(siec_hc, data = data, type = "bic")
+```
+```{r}
+score(siec_iamb, data = data, type = "bic")
+```
+```{r}
+score(siec_fast_iamb, data = data, type = "bic")
+```
+```{r}
+score(siec_pc_stable, data = data, type = "bic")
+```
+```{r}
+score(siec_gs, data = data, type = "bic")
+```
+#### Wybieram siec HC
+
+# Wyznaczenie rozkładów prawdopodobieństwa
+```{r}
+(bn <- bn.fit(siec_hc, data=data))
+bn_grain <- as.grain(bn)
+```
+
+```{r}
+bn.fit.barchart(bn$Stage)
+```
+```{r}
+bn.fit.barchart(bn$Bilirubin)
+```
+```{r}
+bn.fit.barchart(bn$Albumin)
+```
+```{r}
+bn.fit.barchart(bn$Prothrombin)
+```
+```{r}
+bn.fit.barchart(bn$Ascites)
+```
+```{r}
+bn.fit.barchart(bn$Hepatomegaly)
+```
+```{r}
+bn.fit.barchart(bn$Spiders)
+```
+```{r}
+bn.fit.barchart(bn$Edema)
+```
+
+# Prawdopodobieństwa
+
+### Prawdopodobieństwo wystąpienia Ascites dla pacjentów w wieku 16-20:
+```{r}
+TEST_adplvl <- setEvidence(bn_grain, nodes = c('Age'), states = c('16-20'))
+TEST_adplvl_wynik <- querygrain(TEST_adplvl, nodes = c('Ascites'), result = 'array')$Ascites
+print(TEST_adplvl_wynik)
+```
+#### Bardzo małe prawdopodobieństwo wystąpienia Ascites dla pacjentów w wieku 16-20, wynosi 0.08
+
+### Prawdopodobieństwo wystąpienia Spiders dla pacjentów z poziomem prothrombiny poniżej 12:
+```{r}
+TEST2_adplvl <- setEvidence(bn_grain, nodes = c('Prothrombin'), states = c('<12'))
+TEST2_adplvl_wynik <- querygrain(TEST2_adplvl, nodes = c('Spiders'), result = 'array')$Spiders
+print(TEST2_adplvl_wynik)
+```
+#### Małe prawdopodobieństwo wystąpienia Spiders dla pacjentów z poziomem prothrombiny poniżej 12, wynosi 0.29
+
+### Prawdopodobieństwo wystąpienia Prothrombin poniżej 12 dla pacjentów z obecnością Edema:
+```{r}
+TEST3_adplvl <- setEvidence(bn_grain, nodes = c('Stage'), states = c('4'))
+TEST3_adplvl_wynik <- querygrain(TEST3_adplvl, nodes = c('Hepatomegaly'), result = 'array')$Hepatomegaly
+print(TEST3_adplvl_wynik)
+```
+#### Duże prawdopodobieństwo wystąpienia Prothrombin poniżej 12 dla pacjentów z obecnością Edema, wynosi 0.83
+

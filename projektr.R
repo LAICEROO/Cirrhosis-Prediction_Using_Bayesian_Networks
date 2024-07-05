@@ -10,7 +10,7 @@ library(Rgraphviz)
 library(bnlearn)
 library(gRain)
 # ustawienie folderu roboczego
-setwd('C:/Users/olsze/Desktop/wnioskowanie_w_warunkach_niepewnosci_projekt')
+setwd('C:/Users/mateu/Desktop/Studia/6 semestr/Wnioskowanie w warunkach niepewności/')
 getwd()
 
 # Import danych
@@ -40,7 +40,38 @@ for (i in 1:length(dane)){
   dane[,i] <- as.factor(dane[,i])
   cat('Klasa kolumny', i,':', class(dane[,i]), '\n')
 }
+pairwise_ci_test <- function(df) {
+  n <- ncol(df)
+  results <- data.frame(
+    Comparison = character(),
+    p_value = numeric(),
+    Independence = character(),
+    stringsAsFactors = FALSE
+  )
+  
+  for (i in 1:(n-1)) {
+    for (j in (i+1):n) {
+      col1 <- df[[i]]
+      col2 <- df[[j]]
+      
+      if (!is.factor(col1)) col1 <- as.factor(col1)
+      if (!is.factor(col2)) col2 <- as.factor(col2)
+      
+      test_result <- ci.test(col1, col2, test = "x2")
+      comparison_name <- paste(names(df)[i], "vs", names(df)[j])
+      independence <- ifelse(test_result$p.value < 0.05, "dependent", "independent")
+      results <- rbind(results, data.frame(
+        Comparison = comparison_name,
+        p_value = test_result$p.value,
+        Independence = independence
+      ))
+    }
+  }
+  
+  return(results)
+}
 
+wyniki <- pairwise_ci_test(data)
 #### Sprawdzanie zależności i tworzenie tabeli zależności ####
 
 # Tworzenie macierdane# Tworzenie macierzy nxn wypełnionej zerami
